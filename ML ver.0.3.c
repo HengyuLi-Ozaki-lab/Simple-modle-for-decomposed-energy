@@ -1,7 +1,7 @@
 /**********************************************************************
   ML.c:
 
-     MLD.c is a subroutine to perform ML prediction of atomic force
+     ML.c is a subroutine to perform ML prediction of atomic force
 
   Log of ML.c:
 
