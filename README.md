@@ -13,13 +13,13 @@ The example input file is given in Methane.dat, the parameter for ML need to be 
 # ML
 #
 
-ML.status             on
-ML.Max_order     3
-ML.Min_order      -3
+ML.status           on
+ML.Max_order        3
+ML.Min_order        -3
 ML.Train_iter       50
-ML.Correction_iter 10
-ML.Lammda_1    0.7
-ML.Lammda_2    0.0001
+ML.Correction_iter  10
+ML.Lammda_1         0.7
+ML.Lammda_2         0.0001
 ```
 The `ML.status` is to control whether start the ML process.
 
