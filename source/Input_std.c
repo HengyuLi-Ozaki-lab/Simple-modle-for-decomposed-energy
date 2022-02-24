@@ -115,6 +115,19 @@ void Input_std(char *file)
     printf("Invalid value of level.of.fileout\n");
     po++;
   }
+
+  /*****************************************************
+                   Read ML parameters 
+  ******************************************************/ 
+
+  input_logical("ML.status",&ML_status,0);
+  input_int("ML.Max_order",&Max_order,3);
+  input_int("ML.Min_order",&Min_order,3);
+  input_int("ML.Train_iter",&Train_iter,50);
+  input_int("ML.Correction_iter",&Correction_iter,10);
+  input_double("ML.Lammda_1",&lammda1,(double)0.7);
+  input_double("ML.Lammda_2",&lammda2,(double)0.001);
+
   /****************************************************
                projector expansion of VNA
   ****************************************************/

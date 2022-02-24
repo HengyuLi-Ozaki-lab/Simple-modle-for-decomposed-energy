@@ -2585,6 +2585,14 @@ double *Temp_AtGr;
 /* for Langevin heat-bath (added by T.Ohwaki) */
 double FricFac,RandomF;
 
+/* for ML.c input (added by Hengyu Li 2022.02.22) */
+int ML_status;
+int Max_order;
+int Min_order;
+int Train_iter;
+int Correction_iter;
+double lammda1;
+double lammda2;
 
 /* for generalized Bloch Theorem (added by T. B. Prayitno and supervised by Prof. F. Ishii) */
 int GB_switch;
@@ -3464,6 +3472,7 @@ int SEQ(char str1[YOUSO10], char str2[YOUSO10]);
 void Generation_ATV(int CpyCell);
 char *string_tolower(char *buf, char *buf1);
 void iterout(int iter,double drctime,char fileE[YOUSO10],char fileDRC[YOUSO10]);
+void ML_main(int iter,char file1[YOUSO10],char file2[YOUSO10]); /* Add by Hengyu Li 2022.02.22 */
 void iterout_md(int iter,double drctime,char fileSE[YOUSO10]);
 void outputfile1(int f_switch, int MD_iter, int orbitalOpt_iter,
                  int Cnt_Now, int SCF_iter, char fname[YOUSO10],

@@ -664,7 +664,10 @@ int main(int argc, char *argv[])
 
       CompTime[myid][3] += DFT(MD_iter,(MD_iter-1)%orbitalOpt_per_MDIter+1);
       iterout(MD_iter+MD_Current_Iter,MD_TimeStep*(MD_iter+MD_Current_Iter-1),filepath,filename);
-      para_matrix_gen(MD_iter+MD_Current_Iter,filepath,filename);
+      
+      if (ML_status==1){
+        ML_main(MD_iter+MD_Current_Iter,filepath,filename);
+      }
 
       /* MD or geometry optimization */
 

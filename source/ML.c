@@ -7,6 +7,8 @@
 
      10/Sep/2021  Added by Hengyu Li
 
+     ver 1.0 train every 10 MD step for error testing
+
 ***********************************************************************/
 
 #include <stdio.h>
@@ -20,23 +22,30 @@
 #define Pi 3.141592654
 
 /*******************************************************
-     Hyperparameter for fitting decomposed energy
-*******************************************************/
-
-float lammda1 = 0.8, lammda2 = 0.0001;
-int Max_order = 3;
-int Min_order = -3;
-int train_iter = 500;
-
-/*******************************************************
     Arry for distance,angular,matrix A B C A' B' C'
 *******************************************************/
 
 static double *Dec_tot;
 static double **dis_nei;
 static double **ang_nei;
+static double ***matrix_a;
+static double ***matrix_b;
+static double ***matrix_a_;
+static double ***matrix_b_;
+static double **matrix_c;
+static double **matrix_c_;
+static double **fitted_energy;
+static double **loss;
+static double **constant_matrix;
+static double **parameter_matrix;
+static double **current_model;
+static int *angular_num;
 
-/*******************************************************/
+/*******************************************************
+                Subfunction of ML
+*******************************************************/
+
+/* Compute three-body combination number */
 
 int factorial(int m, int n)
 {
@@ -46,8 +55,12 @@ int factorial(int m, int n)
 	if(m < n-m) m = n-m;
 	for(i = m+1; i <= n; i++) ans *= i;
 	for(j = 1; j <= n - m; j++) ans /= j;
+
 	return ans;
+
 }
+
+/* Compute distance for each two-body combination */
 
 void cal_dis(int iter,char filepath[YOUSO10],char filename[YOUSO10])
 {
@@ -70,6 +83,8 @@ void cal_dis(int iter,char filepath[YOUSO10],char filename[YOUSO10])
   }
   fclose(fp);
 }
+
+/* Compute angular for each three-body combination */
 
 void cal_ang(int iter,char filepath[YOUSO10],char filename[YOUSO10])
 {
@@ -100,6 +115,8 @@ void cal_ang(int iter,char filepath[YOUSO10],char filename[YOUSO10])
   }
   fclose(fp);
 }
+
+/* Compute cutoff coefficient */
 
 double cut_off(double distance,double r_cut,int grad)
 {
@@ -203,194 +220,790 @@ void Get_decomposed_ene(int iter,char filepath[YOUSO10],char filename[YOUSO10])
       fprintf(fp,"%s ",SpeName[species]);
       fprintf(fp,"%8.6f\n", Dec_tot[i]);
     }
-    printf("Output test pass\n");
+    printf("Output decomposed energy pass\n");
     fclose(fp);
+  }
+}
+
+/* Allocate working array and matrice for ML */
+
+void ML_allocate()
+{
+  int i,j,k,nei_num;
+
+  angular_num = (int*)malloc(sizeof(int)*(atomnum+1));
+  memset(angular_num,0,(atomnum+1)*sizeof(int));  
+
+  printf("Angular number array allocate Pass\n");
+
+  for (i=1;i<=atomnum;i++){
+    angular_num[i] = factorial(2,FNAN[i]);
+  }
+
+  dis_nei = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    dis_nei[i] = (double*)malloc(sizeof(double)*(FNAN[i]+1));
+    memset(dis_nei[i],0,(FNAN[i]+1)*sizeof(double));
+  }
+
+  printf("Distance calculation Pass\n");
+
+  ang_nei = (double**)malloc(sizeof(double*)*atomnum+1);
+  for(i=1;i<=atomnum;i++){
+    ang_nei[i] = (double*)malloc(sizeof(double)*(angular_num[i]+1));
+    memset(ang_nei[i],0,(angular_num[i]+1)*sizeof(double));
+  }
+
+  printf("Angular calculation Pass\n");
+
+  matrix_a = (double***)malloc(sizeof(double**)*(atomnum+1));
+  for (i=1; i<=atomnum; i++){
+    matrix_a[i] = (double**)malloc(sizeof(double*)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
+    for (j=1; j<=(FNAN[i]*(Max_order-Min_order+1)); j++){
+      matrix_a[i][j] = (double*)malloc(sizeof(double)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
+      memset(matrix_a[i][j],0,(FNAN[i]*(Max_order-Min_order+1)+1)*sizeof(double));
+    }
+  }
+
+  printf("Matrix A allocate Pass\n");
+
+  matrix_b = (double***)malloc(sizeof(double**)*(atomnum+1));
+  for (i=1; i<=atomnum; i++){
+    matrix_b[i] = (double**)malloc(sizeof(double*)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
+    for (j=1; j<=(FNAN[i]*(Max_order-Min_order+1)); j++){
+      matrix_b[i][j] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[i]+1));
+      memset(matrix_b[i][j],0,((Max_order-Min_order+1)*angular_num[i]+1)*sizeof(double));
+    }
+  }
+
+  printf("Matrix B allocate Pass\n");
+
+  matrix_c = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    matrix_c[i] = (double*)malloc(sizeof(double)*(FNAN[i]*(Max_order-Min_order+1)+1));
+    memset(matrix_c[i],0,(FNAN[i]*(Max_order-Min_order+1)+1)*sizeof(double));
+  }
+
+  printf("Matrix C allocate Pass\n");
+
+  matrix_a_ = (double***)malloc(sizeof(double**)*(atomnum+1));
+  for (i=1; i<=atomnum; i++){
+    matrix_a_[i] = (double**)malloc(sizeof(double*)*((Max_order-Min_order+1)*angular_num[i]+1)); 
+    for (j=1; j<=((Max_order-Min_order+1)*angular_num[i]); j++){
+      matrix_a_[i][j] = (double*)malloc(sizeof(double)*(FNAN[i]*(Max_order-Min_order+1)+1));
+      memset(matrix_a_[i][j],0,(FNAN[i]*(Max_order-Min_order+1)+1)*sizeof(double));
+    }
+  }
+
+  printf("Matrix A' allocate Pass\n");
+
+  matrix_b_ = (double***)malloc(sizeof(double**)*(atomnum+1));
+  for (i=1; i<=atomnum; i++){
+    matrix_b_[i] = (double**)malloc(sizeof(double*)*((Max_order-Min_order+1)*angular_num[i]+1)); 
+    for (j=1; j<=((Max_order-Min_order+1)*angular_num[i]); j++){
+      matrix_b_[i][j] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[i]+1));
+      memset(matrix_b_[i][j],0,((Max_order-Min_order+1)*angular_num[i]+1)*sizeof(double)); 
+    }
+  }
+
+  printf("Matrix B' allocate Pass\n");
+
+  matrix_c_ = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    matrix_c_[i] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[i]+1));
+    memset(matrix_c_[i],0,((Max_order-Min_order+1)*angular_num[i]+1)*sizeof(double)); 
+  }
+
+  printf("Matrix C' allocate Pass\n");
+
+  parameter_matrix = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    parameter_matrix[i] = (double*)malloc(sizeof(double)*(pow((nei_num+angular_num[i])*(Max_order-Min_order+1),2)+1));
+    memset(parameter_matrix[i],0,(pow((nei_num+angular_num[i])*(Max_order-Min_order+1),2)+1)*sizeof(double));
+  }
+
+  printf("Parameter array allocate Pass\n");
+
+  constant_matrix = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    constant_matrix[i] = (double*)malloc(sizeof(double)*((nei_num+angular_num[i])*(Max_order-Min_order+1)+1));
+    memset(constant_matrix[i],0,((nei_num+angular_num[i])*(Max_order-Min_order+1)+1)*sizeof(double));
+  }
+
+  printf("Constant array allocate Pass\n");
+
+  current_model = (double**)malloc(sizeof(double*)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    current_model[i] = (double*)malloc(sizeof(double)*((nei_num+angular_num[i])*(Max_order-Min_order+1)+1));
+    memset(current_model[i],0,((nei_num+angular_num[i])*(Max_order-Min_order+1)+1)*sizeof(double));
+  }
+
+  printf("Final model array allocate Pass\n");
+
+  Dec_tot = (double*)malloc(sizeof(double)*(atomnum+1));
+  memset(Dec_tot,0,(atomnum+1)*sizeof(double));
+
+  printf("Decomposed energy array allocate Pass\n");
+
+  fitted_energy = (double**)malloc(sizeof(double)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    fitted_energy[i] = (double*)malloc(sizeof(double)*(MD_IterNumber+1));
+    memset(fitted_energy[i],0,(MD_IterNumber+1)*sizeof(double));
+  }
+
+  printf("Model fitting energy array allocate Pass\n");
+
+  loss = (double**)malloc(sizeof(double)*(atomnum+1));
+  for(i=1;i<=atomnum;i++){
+    loss[i] = (double*)malloc(sizeof(double)*(MD_IterNumber+1));
+    memset(loss[i],0,(MD_IterNumber+1)*sizeof(double));
+  }
+
+  printf("Fitting energy error array allocate Pass\n");
+
+  printf("All array allocate Pass\n");
+
+}
+
+/* Output information */
+
+void ML_output(int iter, char filepath[YOUSO10], char filename[YOUSO10], char keyword[YOUSO10])
+{
+  int i,j,k,nei_num;
+  char target_file[YOUSO10];
+  FILE *fp;
+
+  strcpy(target_file, keyword);
+
+  fnjoint(filepath,filename,target_file);
+
+  fp = fopen(target_file,"a");
+  
+  if (keyword==".matrix"){
+
+    fprintf(fp,"Matrices at MD iter =%d\n",iter);
+
+    /* Output matrix A */
+
+    fprintf(fp,"Matrix A\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix A for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
+        for (k=1; k<=(Max_order-Min_order+1)*FNAN[i]; k++){
+          fprintf(fp,"%8.6f ",matrix_a[i][j][k]);
+        }
+        fprintf(fp,"\n");
+      }
+    }
+    fprintf(fp,"\n");
+
+    /* Output matrix C */
+
+    fprintf(fp,"Matrix C\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix C for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
+        fprintf(fp,"%8.6f ",matrix_c[i][j]);
+      }
+      fprintf(fp,"\n");
+    }
+    fprintf(fp,"\n");
+
+    /* Output matrix B */
+
+    fprintf(fp,"Matrix B\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix B for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
+        for (k=1; k<=(Max_order-Min_order+1)*angular_num[i]; k++){
+          fprintf(fp,"%8.6f ",matrix_b[i][j][k]);
+        }
+        fprintf(fp,"\n");
+      }
+    }
+    fprintf(fp,"\n");
+
+    /* Output matrix A' */
+
+    fprintf(fp,"Matrix A'\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix A' for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
+        for (k=1; k<=(Max_order-Min_order+1)*FNAN[i]; k++){
+          fprintf(fp,"%8.6f ",matrix_a_[i][j][k]);
+        }
+        fprintf(fp,"\n");
+      }
+    }
+    fprintf(fp,"\n");
+
+    /* Output matrix C' */
+
+    fprintf(fp,"Matrix C'\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix C' for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
+        fprintf(fp,"%8.6f ",matrix_c_[i][j]);
+      }
+      fprintf(fp,"\n");
+    }
+    fprintf(fp,"\n");
+
+    /* Output matrix B' */
+
+    fprintf(fp,"Matrix B'\n");
+    for (i=1; i<=atomnum; i++){
+      fprintf(fp,"Matrix B' for atom %d\n", i);
+      for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
+        for (k=1; k<=(Max_order-Min_order+1)*angular_num[i]; k++){
+          fprintf(fp,"%8.6f ",matrix_b_[i][j][k]);
+        }
+        fprintf(fp,"\n");
+      }
+    }
+
+    fclose(fp);
+
+    printf("Out matrix Pass\n");
+
+  }
+
+  else if (keyword==".solver_input"){
+
+    fprintf(fp,"Parameter and constant array at MD iter =%d\n",iter);
+
+    for (i=1;i<=atomnum;i++){
+      nei_num = FNAN[i];
+      fprintf(fp,"Parameter matrix for atom %d\n",i);
+      for (j=1;j<=pow((nei_num+angular_num[i])*(Max_order-Min_order+1),2);j++){
+        fprintf(fp,"%8.6f ",parameter_matrix[i][j]); 
+      }
+      fprintf(fp,"\n");
+      fprintf(fp,"Constant matrix for atom %d\n",i);
+      for (k=1;k<=(nei_num+angular_num[i])*(Max_order-Min_order+1);k++){ 
+        fprintf(fp,"%8.8f ",constant_matrix[i][k]);
+      }
+      fprintf(fp,"\n");
+    }
+
+    fclose(fp);
+
+    printf("Out solver input Pass\n");
+
+  }
+
+  else if (keyword==".fitted_parameter"){
+
+    fprintf(fp,"Fitted parameters for MD %d\n",iter);
+
+    for (i=1;i<=atomnum;i++){
+      nei_num =FNAN[i];
+      fprintf(fp,"atom %d\n",i);
+      for (j=1;j<=(nei_num+angular_num[i])*(Max_order-Min_order+1);j++){
+        fprintf(fp,"%8.8f ",constant_matrix[i][j]);
+      }
+      fprintf(fp,"\n");
+    }
+
+    fclose(fp);
+
+    printf("Out fitted parameter Pass\n");
+
+  }
+  
+  else if (keyword==".error"){
+
+    if (iter==MD_IterNumber){
+      fprintf(fp,"Fitting error for each atom\n");
+      for (i=1;i<=atomnum;i++){
+        fprintf(fp,"Atom %d ",i);
+        for (j=1;j<=MD_IterNumber;j++){
+          fprintf(fp,"%8.6f ",loss[i][j]);
+        }
+        fprintf(fp,"\n");
+      }
+      fclose(fp);
+
+      printf("Out fitting error Pass\n");
+    }
+  }
+  
+  else if (keyword==".fitted_energy"){
+
+    if (iter==MD_IterNumber){
+      fprintf(fp,"Fitting energy for each atom\n");
+      for (i=1;i<=atomnum;i++){
+        fprintf(fp,"Atom %d ",i);
+        for (j=1;j<=MD_IterNumber;j++){
+          fprintf(fp,"%8.6f ",fitted_energy[i][j]);
+        }
+        fprintf(fp,"\n");
+      }
+
+      fclose(fp);      
+    }
+
+    printf("Out fitting energy Pass\n");
+
+  }
+
+  else{
+    printf("Check output keyword \n");
   }
 
 }
 
-void para_matrix_gen(int iter,char filepath[YOUSO10],char filename[YOUSO10])
+/* Generate the matrice for linear solver */
+
+void ML_matrix_gen(int iter, char filepath[YOUSO10], char filename[YOUSO10])
 {
+  int i,j,k,p,j_1,j_2,k_1,p_1,p_2;
+  int count_ang,count_ang1,count_ang2,row,column,parameter_count;
+  int species,nei_num;
+  double r_cut;
 
-  char filelast[YOUSO10] = ".matrix",filelast1[YOUSO10] = ".parameter",filelast2[YOUSO10] = ".result",filelast3[YOUSO10] = ".loss",filelast4[YOUSO10] = ".info";
-  char filelast5[YOUSO10] = ".fit";
-  static int i,j,k,p,j_1,j_2,k_1,p_1,p_2,nei_num,count_ang,count_ang1,count_ang2,row,column,species,myid,ID;
-  static int parameter_count,constant_count,matrix_count,test,count_para,matrix_test;
-  double r_cut,energy_test;
+  for (i=1;i<=atomnum;i++){
 
-  static double ***matrix_a;
-  static double ***matrix_b;
-  static double ***matrix_a_;
-  static double ***matrix_b_;
-  static double **matrix_c;
-  static double **matrix_c_;
-  static double **model_energy;
-  static double **loss;
-  static double **constant_matrix;
-  static double **parameter_matrix;
-  static double **final_model;
-  static int *angular_num;
+    species = WhatSpecies[i];
+    r_cut = Spe_Atom_Cut1[species]; // Should specified by myself
+    nei_num = FNAN[i];
 
-  /* Lapack varibles */
-  int n, nrhs, lda, ldb, info, lwork;
-  double wkopt;
+    for (j=1;j<=nei_num;j++){
+      for (p=Min_order;p<=Max_order;p++){
+
+        /* Generation of A */
+
+        for (j_1=1;j_1<=nei_num;j_1++){
+          for (p_1=Min_order;p_1<=Max_order;p_1++){
+            matrix_a[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda1*pow(dis_nei[i][j],p)*pow(dis_nei[i][j_1],p_1)*\
+            cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][j_1],r_cut,0);
+            if (j==j_1 && p==p_1){
+              matrix_a[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda2;
+            }
+          }
+        }
+
+        /* Generation of B */
+
+        column = 1;
+        count_ang = 1;
+        for (j_2=1;j_2<=nei_num-1;j_2++){
+          for (k=j_2+1;k<=nei_num;k++){
+            for (p_2=Min_order;p_2<=Max_order;p_2++){
+              matrix_b[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][column] += 2*lammda1*pow(ang_nei[i][count_ang],p_2)*pow(dis_nei[i][j],p)*\
+              cut_off(dis_nei[i][j_2],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j],r_cut,0);
+              column ++;
+            }
+            count_ang ++;
+          }
+        }
+
+        /* Generation of C */
+
+        matrix_c[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1] += 2*lammda1*pow(dis_nei[i][j],p)*cut_off(dis_nei[i][j],r_cut,0)*Dec_tot[i];
+
+      }
+    }
+  }
+
+  printf("Generate A B C Pass\n");
+
+  /* Generation of matrix A' B' C' */
+
+  for (i=1;i<=atomnum;i++){
+    species = WhatSpecies[i];
+    r_cut = Spe_Atom_Cut1[species];
+    nei_num = FNAN[i];
+    row = 1;
+    count_ang1 = 1;
+    for (j=1;j<=nei_num-1;j++){
+      for (k=j+1;k<=nei_num;k++){
+        for (p=Min_order;p<=Max_order;p++){
+
+          /* Generation of A' */
+
+          for (j_1=1;j_1<=nei_num;j_1++){
+            for (p_1=Min_order;p_1<=Max_order;p_1++){
+              matrix_a_[i][row][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*pow(dis_nei[i][j_1],p_1)*\
+              cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j_1],r_cut,0);
+            }
+          }
+
+          /* Generation of B' */
+
+          column = 1;
+          count_ang2 = 1;
+          for (j_2=1;j_2<=nei_num-1;j_2++){
+            for (k_1=j_2+1;k_1<=nei_num;k_1++){
+              for (p_2=Min_order;p_2<=Max_order;p_2++){
+                matrix_b_[i][row][column] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*pow(ang_nei[i][count_ang2],p_2)*\
+                cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j_2],r_cut,0)*cut_off(dis_nei[i][k_1],r_cut,0);
+                if (j==j_2 && k==k_1 && p==p_2){
+                  matrix_b_[i][row][column] += 2*lammda2;
+                }
+                column ++;
+              }
+              count_ang2 ++;
+            }
+          }
+
+          /* Generation of C' */ 
+
+          matrix_c_[i][row] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*Dec_tot[i];
+          row ++;
+        }
+        count_ang1 ++;
+      }
+    }
+  }
+
+  printf("Generate A' B' C' Pass\n");
+
+  ML_output(iter,filepath,filename,".matrix");
+  
+  printf("Out put matrix Pass\n");
+
+  /* Transform matrice to array for solver */
+
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    parameter_count = 1;
+    for (j=1;j<=nei_num*(Max_order-Min_order+1);j++){
+      for (k=1;k<=nei_num*(Max_order-Min_order+1);k++){
+        parameter_matrix[i][parameter_count] = matrix_a[i][j][k];
+        parameter_count ++;
+      }
+      for (p=1;p<=(Max_order-Min_order+1)*angular_num[i];p++){
+        parameter_matrix[i][parameter_count] = matrix_b[i][j][p];
+        parameter_count ++;
+      }
+    }
+
+    for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
+      for (k=1;k<=nei_num*(Max_order-Min_order+1);k++){
+        parameter_matrix[i][parameter_count] = matrix_a_[i][j][k];
+        parameter_count ++;
+      }
+      for (p=1;p<=(Max_order-Min_order+1)*angular_num[i];p++){
+        parameter_matrix[i][parameter_count] = matrix_b_[i][j][p];
+        parameter_count ++;
+      }
+    }
+  }
+
+  printf("Transform para array Pass\n");
+
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    row = 1;
+    for (j=1;j<=nei_num*(Max_order-Min_order+1);j++){
+      constant_matrix[i][row] = matrix_c[i][j]; // - ? +
+      row ++;
+    }
+    for (k=1;k<=(Max_order-Min_order+1)*angular_num[i];k++){
+      constant_matrix[i][row] = matrix_c_[i][k];
+      row ++;
+    }
+  }
+
+  printf("Transform const array Pass\n");
+
+  ML_output(iter,filepath,filename,".solver_input");
+
+}
+
+/* Linear solver for fitting */
+
+void ML_DSYSV_solver(int iter, char filepath[YOUSO10], char filename[YOUSO10])
+{
+  int i,j,nei_num;
+  int n,nrhs,lda,ldb,info,lwork;
   double *work;
   int *ipiv;
-
-  /* Output file */
+  char filelast[YOUSO10] = ".solver_info";
   FILE *fp;
-  FILE *fp1;
-  FILE *fp2;
-  FILE *fp3;
-  FILE *fp4;
-  FILE *fp5;
+
+  fnjoint(filepath,filename,filelast);
+  fp = fopen(filelast,"a");
+
+  /* DSYSV Solver */
+
+  printf("Start Solver\n");
+
+  for (i=1;i<=atomnum;i++){
+
+    nei_num = FNAN[i];
+    n = (nei_num+angular_num[i])*(Max_order-Min_order+1);
+    nrhs = 1;
+    lda = (nei_num+angular_num[i])*(Max_order-Min_order+1); 
+    ldb = (nei_num+angular_num[i])*(Max_order-Min_order+1);
+    lwork = (nei_num+angular_num[i])*(Max_order-Min_order+1);
+
+    /* Allocate the work array */
+
+    work= (double*)malloc(sizeof(double)*lwork);
+    memset(work,0,lwork*sizeof(double));
+
+    ipiv = (int*)malloc(sizeof(int)*n);
+    memset(ipiv,0,n*sizeof(int));
+
+    /* Call LAPACK solver DSYCV */
+
+    F77_NAME(dsysv,DSYSV)("L", &n, &nrhs, &parameter_matrix[i][1], &lda, ipiv, &constant_matrix[i][1], &ldb, work, &lwork, &info); // [i][0] -> [i][1]
+ 
+    /* Free work array */
+
+    free(ipiv);
+    ipiv = NULL;
+
+    free(work);
+    work = NULL;
+    
+    if (info!=0) {
+      fprintf(fp,"info=%d for atom %d at MD iter %d\n",i,info,iter);
+    }
+  }
+
+  fclose(fp);
+
+  ML_output(iter,filepath,filename,".fitted_parameter");
+
+  printf("Solver pass at all atom\n");
+
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    for (j=1;j<=(nei_num+angular_num[i])*(Max_order-Min_order+1);j++){
+      current_model[i][j] = constant_matrix[i][j];
+    }
+  }
+
+  printf("Record model pass\n");
+
+}
+
+/* Calculate the model energy and loss respect to current model */
+
+double ML_modle_energy(int iter)
+{
+  int i,j,j_1,k,p,p_1,count_para,count_ang,nei_num,species;
+  double pre_energy,r_cut;
+
+  /* Rebuild model energy */ 
+
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    species = WhatSpecies[i];
+    r_cut = Spe_Atom_Cut1[species]; //
+    count_para = 1;
+
+    for (j=1;j<=nei_num;j++){
+      for (p=Min_order;p<=Max_order;p++){
+        pre_energy = current_model[i][count_para]*cut_off(dis_nei[i][j],r_cut,0)*pow(dis_nei[i][j],p);
+        fitted_energy[i][iter] += pre_energy;
+        count_para ++;
+      }
+    }
+
+    count_ang = 1;
+    for (j_1=1;j_1<=nei_num-1;j_1++){
+      for (k=j_1+1;k<=nei_num;k++){
+        for (p_1=Min_order;p_1<=Max_order;p_1++){
+          pre_energy = current_model[i][count_para]*cut_off(dis_nei[i][j_1],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*pow(ang_nei[i][count_ang],p_1);
+          fitted_energy[i][iter] += pre_energy;
+          count_para ++;
+        }
+        count_ang ++;
+      }
+    }
+  }
+
+  //ML_output(iter,filepath,filename,".fitted_energy");
+
+  /* Compute error */
+
+  for (i=1;i<=atomnum;i++){
+    loss[i][iter] = fitted_energy[i][iter]-Dec_tot[i];
+  }
+
+  //ML_output(iter,filepath,filename,".error");
+
+}
+
+/* Free working array and matrice */
+
+void ML_free_array()
+{
+  int i,j,nei_num;
+
+  /* Free Matrix A */
+
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    for (j=1;j<=(Max_order-Min_order+1)*nei_num;j++){
+      free(matrix_a[i][j]);
+    }
+  }
+
+  for (i=1;i<=atomnum;i++){
+    free(matrix_a[i]);
+  }
+
+  free(matrix_a);
+  matrix_a = NULL;
+
+  /* Free Matrix B */
+  
+  for (i=1;i<=atomnum;i++){
+    nei_num = FNAN[i];
+    for (j=1;j<=(Max_order-Min_order+1)*nei_num;j++){
+      free(matrix_b[i][j]);
+    }
+    free(matrix_b[i]);
+  }
+  free(matrix_b);
+
+  matrix_b = NULL;
+
+  /* Free Matrix C */
+  
+  for (i=1;i<=atomnum;i++){
+    free(matrix_c[i]);
+  }
+  free(matrix_c);
+
+  matrix_c = NULL;
+
+  /* Free Matrix A' */
+  
+  for (i=1;i<=atomnum;i++){
+    for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
+      free(matrix_a_[i][j]);
+    }
+    free(matrix_a_[i]);
+  }
+  free(matrix_a_);
+
+  matrix_a_ = NULL;
+
+  /* Free Matrix B' */
+  
+  for (i=1;i<=atomnum;i++){
+    for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
+      free(matrix_b_[i][j]);
+    }
+    free(matrix_b_[i]);
+  }
+  free(matrix_b_);
+
+  matrix_b_ = NULL;
+
+  /* Free Matrix C' */
+  
+  for (i=1;i<=atomnum;i++){
+    free(matrix_c_[i]);
+  }
+  free(matrix_c_);
+
+  matrix_c_ = NULL;
+
+  printf("Free matrix pass\n");
+
+  /* Free Para matrix */
+
+  for (i=1;i<=atomnum;i++){
+    free(parameter_matrix[i]);
+  }
+  free(parameter_matrix);
+
+  parameter_matrix = NULL;
+
+  /* Free Const matrix */
+
+  for (i=1;i<=atomnum;i++){
+    free(constant_matrix[i]);
+  }
+  free(constant_matrix);
+
+  constant_matrix = NULL;
+
+  printf("Free para & const array pass\n");
+
+  /* Free Distance & Angular array */
+
+  for (i=1;i<=atomnum;i++){
+    free(dis_nei[i]);
+  }
+  free(dis_nei);
+
+  dis_nei = NULL;
+
+  for (i=1;i<=atomnum;i++){
+    free(ang_nei[i]);
+  }
+  free(ang_nei);
+
+  ang_nei = NULL;
+
+  printf("Free dis & ang pass\n");
+
+  /* Free Decomposed energy,fitted energy,loss,current model array */
+
+  free(Dec_tot);
+  Dec_tot = NULL;
+
+  for (i=1;i<=atomnum;i++){
+    free(fitted_energy[i]);
+  }
+  free(fitted_energy);
+
+  fitted_energy = NULL;
+
+  for (i=1;i<=atomnum;i++){
+    free(loss[i]);
+  }
+  free(loss);
+  
+  loss = NULL;
+
+  for (i=1;i<=atomnum;i++){
+    free(current_model[i]);
+  }
+  free(current_model);
+
+  current_model = NULL;
+
+  printf("Free Dec model loss pass\n");
+
+  free(angular_num);
+  angular_num = NULL;
+
+  printf("free angular number\n");
+
+}
+
+/*******************************************************
+                Main function of ML
+*******************************************************/
+
+void ML_main(int iter,char filepath[YOUSO10],char filename[YOUSO10])
+{
+
+  int myid;
 
   /* MPI */
   MPI_Status status;
-
-  fnjoint(filepath,filename,filelast);
-  fnjoint(filepath,filename,filelast1);
-  fnjoint(filepath,filename,filelast2);
-  fnjoint(filepath,filename,filelast3);
-  fnjoint(filepath,filename,filelast4);
-  fnjoint(filepath,filename,filelast5);
-  fp = fopen(filelast,"a");
-  fp1 = fopen(filelast1,"a");
-  fp2 = fopen(filelast2,"a");
-  fp3 = fopen(filelast3,"a");
-  fp4 = fopen(filelast4,"a");
-  fp5 = fopen(filelast5,"a");
-
-  /* MPI preparation */
   MPI_Comm_rank(mpi_comm_level1,&myid);
-
-  /* Allocate array */
 
   if (myid==Host_ID){
 
-    printf("Start\n");
-
+    /* Allocate array */
     if (iter==1){
-      angular_num = (int*)malloc(sizeof(int)*(atomnum+1));
-      memset(angular_num,0,(atomnum+1)*sizeof(int));      
+      ML_allocate();
     }
 
-    for (i=1;i<=atomnum;i++){
-      angular_num[i] = factorial(2,FNAN[i]);
-    }
-
-    printf("Check 1 Pass\n");
-    
-    dis_nei = (double**)malloc(sizeof(double*)*(atomnum+1));
-    for(j=1;j<=atomnum;j++){
-      dis_nei[j] = (double*)malloc(sizeof(double)*(FNAN[j]+1));
-      memset(dis_nei[j],0,(FNAN[j]+1)*sizeof(double));
-    }
-
-    printf("Check 2 Pass\n");
-
-    ang_nei = (double**)malloc(sizeof(double*)*atomnum+1);
-    for(j=1;j<=atomnum;j++){
-      ang_nei[j] = (double*)malloc(sizeof(double)*(angular_num[j]+1));
-      memset(ang_nei[j],0,(angular_num[j]+1)*sizeof(double));
-    }
-
-    printf("Check 3 Pass\n");
-
-    if (iter==1){
-
-      matrix_a = (double***)malloc(sizeof(double**)*(atomnum+1));
-      for (i=1; i<=atomnum; i++){
-        matrix_a[i] = (double**)malloc(sizeof(double*)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
-        for (j=1; j<=(FNAN[i]*(Max_order-Min_order+1)); j++){
-          matrix_a[i][j] = (double*)malloc(sizeof(double)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
-          memset(matrix_a[i][j],0,(FNAN[i]*(Max_order-Min_order+1)+1)*sizeof(double));
-        }
-      }
-
-      matrix_b = (double***)malloc(sizeof(double**)*(atomnum+1));
-      for (i=1; i<=atomnum; i++){
-        matrix_b[i] = (double**)malloc(sizeof(double*)*(FNAN[i]*(Max_order-Min_order+1)+1)); 
-        for (j=1; j<=(FNAN[i]*(Max_order-Min_order+1)); j++){
-          matrix_b[i][j] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[i]+1));
-          memset(matrix_b[i][j],0,((Max_order-Min_order+1)*angular_num[i]+1)*sizeof(double));
-        }
-      }
-
-      matrix_c = (double**)malloc(sizeof(double*)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        matrix_c[j] = (double*)malloc(sizeof(double)*(FNAN[j]*(Max_order-Min_order+1)+1));
-        memset(matrix_c[j],0,(FNAN[j]*(Max_order-Min_order+1)+1)*sizeof(double));
-      }
-
-      matrix_a_ = (double***)malloc(sizeof(double**)*(atomnum+1));
-      for (i=1; i<=atomnum; i++){
-        matrix_a_[i] = (double**)malloc(sizeof(double*)*((Max_order-Min_order+1)*angular_num[i]+1)); 
-        for (j=1; j<=((Max_order-Min_order+1)*angular_num[i]); j++){
-          matrix_a_[i][j] = (double*)malloc(sizeof(double)*(FNAN[i]*(Max_order-Min_order+1)+1));
-          memset(matrix_a_[i][j],0,(FNAN[i]*(Max_order-Min_order+1)+1)*sizeof(double));
-        }
-      }
-
-      matrix_b_ = (double***)malloc(sizeof(double**)*(atomnum+1));
-      for (i=1; i<=atomnum; i++){
-        matrix_b_[i] = (double**)malloc(sizeof(double*)*((Max_order-Min_order+1)*angular_num[i]+1)); 
-        for (j=1; j<=((Max_order-Min_order+1)*angular_num[i]); j++){
-          matrix_b_[i][j] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[i]+1));
-          memset(matrix_b_[i][j],0,((Max_order-Min_order+1)*angular_num[i]+1)*sizeof(double)); 
-        }
-      }
-
-      matrix_c_ = (double**)malloc(sizeof(double*)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        matrix_c_[j] = (double*)malloc(sizeof(double)*((Max_order-Min_order+1)*angular_num[j]+1));
-        memset(matrix_c_[j],0,((Max_order-Min_order+1)*angular_num[j]+1)*sizeof(double)); 
-      }
-
-      Dec_tot = (double*)malloc(sizeof(double)*(atomnum+1));
-      memset(Dec_tot,0,(atomnum+1)*sizeof(double));
-
-      model_energy = (double**)malloc(sizeof(double)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        model_energy[j] = (double*)malloc(sizeof(double)*(MD_IterNumber+1));
-        memset(model_energy[j],0,(MD_IterNumber+1)*sizeof(double));
-      }
-
-      loss = (double**)malloc(sizeof(double)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        loss[j] = (double*)malloc(sizeof(double)*(MD_IterNumber+1));
-        memset(loss[j],0,(MD_IterNumber+1)*sizeof(double));
-      }
-
-      printf("Matrix Pass\n");
-
-      parameter_matrix = (double**)malloc(sizeof(double*)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        nei_num = FNAN[j];
-        parameter_matrix[j] = (double*)malloc(sizeof(double)*(pow((nei_num+angular_num[j])*(Max_order-Min_order+1),2)+1));
-        memset(parameter_matrix[j],0,(pow((nei_num+angular_num[j])*(Max_order-Min_order+1),2)+1)*sizeof(double));
-      }
-
-      constant_matrix = (double**)malloc(sizeof(double*)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        nei_num = FNAN[j];
-        constant_matrix[j] = (double*)malloc(sizeof(double)*((nei_num+angular_num[j])*(Max_order-Min_order+1)+1));
-        memset(constant_matrix[j],0,((nei_num+angular_num[j])*(Max_order-Min_order+1)+1)*sizeof(double));
-      }
-
-      printf("Para Const Pass\n");
-
-      final_model = (double**)malloc(sizeof(double*)*(atomnum+1));
-      for(j=1;j<=atomnum;j++){
-        nei_num = FNAN[j];
-        final_model[j] = (double*)malloc(sizeof(double)*((nei_num+angular_num[j])*(Max_order-Min_order+1)+1));
-        memset(final_model[j],0,((nei_num+angular_num[j])*(Max_order-Min_order+1)+1)*sizeof(double));
-      }
-
-      printf("Final model Pass\n");
-
-    }
-    printf("Allocate Pass\n");
   }
   
   /* Get decomposed energy */
@@ -399,576 +1012,64 @@ void para_matrix_gen(int iter,char filepath[YOUSO10],char filename[YOUSO10])
 
   if (myid==Host_ID){
 
-    /* Preparae the angular,distance */ 
+    if (iter<=Train_iter){
 
-    cal_dis(iter,filepath,filename);
-    cal_ang(iter,filepath,filename);
+      /* Calculate distance and angular for central atom */
 
-    printf("Dis & Ang Pass\n");
+      cal_dis(iter,filepath,filename);
+      cal_ang(iter,filepath,filename);
 
-    for (i=1;i<=atomnum;i++){
-      printf("neibor %d\n",FNAN[i]);
-    }
+      /* Generate parameter matrix and constant matrix */
 
-    /* Training process */
+      ML_matrix_gen(iter,filepath,filename);
 
-    if (iter<=train_iter){
+      /* Run linear solver to fit the polynomial */
 
-      fprintf(fp,"\nMatrix_a at MD iter =%d\n",iter);
+      ML_DSYSV_solver(iter,filepath,filename);
 
-      /* Generation of matrix A B C */
+      /* Compute model energy and error */
 
-      for (i=1;i<=atomnum;i++){
-        species = WhatSpecies[i];
-        r_cut = Spe_Atom_Cut1[species];
-        nei_num = FNAN[i];
-        for (j=1;j<=nei_num;j++){
-          for (p=Min_order;p<=Max_order;p++){
-
-            /* Generation of A */
-
-            for (j_1=1;j_1<=nei_num;j_1++){
-              for (p_1=Min_order;p_1<=Max_order;p_1++){
-                matrix_a[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda1*pow(dis_nei[i][j],p)*pow(dis_nei[i][j_1],p_1)*\
-                cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][j_1],r_cut,0);
-                if (j==j_1 && p==p_1){
-                  matrix_a[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda2;
-                }
-              }
-            }
-
-            /* Generation of B */
-
-            column = 1;
-            count_ang = 1;
-            for (j_2=1;j_2<=nei_num-1;j_2++){
-              for (k=j_2+1;k<=nei_num;k++){
-                for (p_2=Min_order;p_2<=Max_order;p_2++){
-                  matrix_b[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1][column] += 2*lammda1*pow(ang_nei[i][count_ang],p_2)*pow(dis_nei[i][j],p)*\
-                  cut_off(dis_nei[i][j_2],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j],r_cut,0);
-                  column ++;
-                }
-                count_ang ++;
-              }
-            }
-
-            /* Generation of C */
-
-            matrix_c[i][(j-1)*(Max_order-Min_order+1)+p-Min_order+1] += 2*lammda1*pow(dis_nei[i][j],p)*cut_off(dis_nei[i][j],r_cut,0)*Dec_tot[i];
-
-          }
-        }
-      }
-
-      printf("A B C Pass\n");
-
-      /* Generation of matrix A' B' C' */
-
-      for (i=1;i<=atomnum;i++){
-        species = WhatSpecies[i];
-        r_cut = Spe_Atom_Cut1[species];
-        nei_num = FNAN[i];
-        row = 1;
-        count_ang1 = 1;
-        for (j=1;j<=nei_num-1;j++){
-          for (k=j+1;k<=nei_num;k++){
-            for (p=Min_order;p<=Max_order;p++){
-
-              /* Generation of A' */
-
-              for (j_1=1;j_1<=nei_num;j_1++){
-                for (p_1=Min_order;p_1<=Max_order;p_1++){
-                  matrix_a_[i][row][(j_1-1)*(Max_order-Min_order+1)+p_1-Min_order+1] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*pow(dis_nei[i][j_1],p_1)*\
-                  cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j_1],r_cut,0);
-                }
-              }
-
-              /* Generation of B' */
-
-              column = 1;
-              count_ang2 = 1;
-              for (j_2=1;j_2<=nei_num-1;j_2++){
-                for (k_1=j_2+1;k_1<=nei_num;k_1++){
-                  for (p_2=Min_order;p_2<=Max_order;p_2++){
-                    matrix_b_[i][row][column] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*pow(ang_nei[i][count_ang2],p_2)*\
-                    cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*cut_off(dis_nei[i][j_2],r_cut,0)*cut_off(dis_nei[i][k_1],r_cut,0);
-                    if (j==j_2 && k==k_1 && p==p_2){
-                      matrix_b_[i][row][column] += 2*lammda2;
-                    }
-                    column ++;
-                  }
-                  count_ang2 ++;
-                }
-              }
-
-              /* Generation of C' */ 
-
-              matrix_c_[i][row] += 2*lammda1*pow(ang_nei[i][count_ang1],p)*cut_off(dis_nei[i][j],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*Dec_tot[i];
-              row ++;
-            }
-            count_ang1 ++;
-          }
-        }
-      }
-
-      printf("A' B' C' Pass\n");
-
-      /* Output matrix A */
-
-      fprintf(fp,"Matrix A\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix A for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
-          for (k=1; k<=(Max_order-Min_order+1)*FNAN[i]; k++){
-            fprintf(fp,"%8.6f ",matrix_a[i][j][k]);
-          }
-          fprintf(fp,"\n");
-        }
-      }
-      fprintf(fp,"\n");
-
-      /* Output matrix C */
-
-      fprintf(fp,"Matrix C\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix C for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
-          fprintf(fp,"%8.6f ",matrix_c[i][j]);
-        }
-        fprintf(fp,"\n");
-      }
-      fprintf(fp,"\n");
-
-      /* Output matrix B */
-
-      fprintf(fp,"Matrix B\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix B for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*FNAN[i]; j++){
-          for (k=1; k<=(Max_order-Min_order+1)*angular_num[i]; k++){
-            fprintf(fp,"%8.6f ",matrix_b[i][j][k]);
-          }
-          fprintf(fp,"\n");
-        }
-      }
-      fprintf(fp,"\n");
-
-      /* Output matrix A' */
-
-      fprintf(fp,"Matrix A'\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix A' for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
-          for (k=1; k<=(Max_order-Min_order+1)*FNAN[i]; k++){
-            fprintf(fp,"%8.6f ",matrix_a_[i][j][k]);
-          }
-          fprintf(fp,"\n");
-        }
-      }
-      fprintf(fp,"\n");
-
-      /* Output matrix C' */
-
-      fprintf(fp,"Matrix C'\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix C' for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
-          fprintf(fp,"%8.6f ",matrix_c_[i][j]);
-        }
-        fprintf(fp,"\n");
-      }
-      fprintf(fp,"\n");
-
-      /* Output matrix B' */
-
-      fprintf(fp,"Matrix B'\n");
-      for (i=1; i<=atomnum; i++){
-        fprintf(fp,"Matrix B' for atom %d\n", i);
-        for (j=1; j<=(Max_order-Min_order+1)*angular_num[i]; j++){
-          for (k=1; k<=(Max_order-Min_order+1)*angular_num[i]; k++){
-            fprintf(fp,"%8.6f ",matrix_b_[i][j][k]);
-          }
-          fprintf(fp,"\n");
-        }
-      }
-
-      fclose(fp);
-
-      printf("Out matrix Pass\n");
+      ML_modle_energy(iter);
       
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        parameter_count = 1;
-        for (j=1;j<=nei_num*(Max_order-Min_order+1);j++){
-          for (k=1;k<=nei_num*(Max_order-Min_order+1);k++){
-            parameter_matrix[i][parameter_count] = matrix_a[i][j][k];
-            parameter_count ++;
-          }
-          for (p=1;p<=(Max_order-Min_order+1)*angular_num[i];p++){
-            parameter_matrix[i][parameter_count] = matrix_b[i][j][p];
-            parameter_count ++;
-          }
-        }
+    }
 
-        for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
-          for (k=1;k<=nei_num*(Max_order-Min_order+1);k++){
-            parameter_matrix[i][parameter_count] = matrix_a_[i][j][k];
-            parameter_count ++;
-          }
-          for (p=1;p<=(Max_order-Min_order+1)*angular_num[i];p++){
-            parameter_matrix[i][parameter_count] = matrix_b_[i][j][p];
-            parameter_count ++;
-          }
-        }
-        printf("parameter count = %d\n",parameter_count);
-      }
+    else if (iter>Train_iter && iter%Correction_iter==0){
 
-      printf("Tran para matrix Pass\n");
+      /* Calculate distance and angular for central atom */
 
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        row = 1;
-        for (j=1;j<=nei_num*(Max_order-Min_order+1);j++){
-          constant_matrix[i][row] = matrix_c[i][j]; // - ? +
-          row ++;
-        }
-        for (k=1;k<=(Max_order-Min_order+1)*angular_num[i];k++){
-          constant_matrix[i][row] = matrix_c_[i][k];
-          row ++;
-        }
-        printf("constant count = %d\n",row);
-      }
+      cal_dis(iter,filepath,filename);
+      cal_ang(iter,filepath,filename);
 
-      printf("Tran matrix Pass\n");
+      /* Generate parameter matrix and constant matrix */
 
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        fprintf(fp1,"Parameter matrix for atom %d\n",i);
-        for (j=1;j<=pow((nei_num+angular_num[i])*(Max_order-Min_order+1),2);j++){
-          fprintf(fp1,"%8.6f ",parameter_matrix[i][j]); 
-        }
-        fprintf(fp1,"\n");
-        fprintf(fp1,"Constant matrix for atom %d\n",i);
-        for (test=1;test<=(nei_num+angular_num[i])*(Max_order-Min_order+1);test++){ 
-          fprintf(fp1,"%8.8f ",constant_matrix[i][test]);
-        }
-        fprintf(fp1,"\n");
-      }
+      ML_matrix_gen(iter,filepath,filename);
 
-      fclose(fp1);
+      /* Run linear solver to fit the polynomial */
 
-      /* DSYSV Solver */
+      ML_DSYSV_solver(iter,filepath,filename);
 
-      printf("Start Solver\n");
+      /* Compute model energy and error */
 
-      fprintf(fp2,"Result for MD %d\n",iter);
-
-      for (i=1;i<=atomnum;i++){
-
-        nei_num = FNAN[i];
-        n = (nei_num+angular_num[i])*(Max_order-Min_order+1); //nei_num*Max_order+Max_order*angular_num[i]; This part should be included in for i< atomnum, nei_num should change with i
-        nrhs = 1;
-        lda = (nei_num+angular_num[i])*(Max_order-Min_order+1); //nei_num*Max_order+Max_order*angular_num[i];
-        ldb = (nei_num+angular_num[i])*(Max_order-Min_order+1); //nei_num*Max_order+Max_order*angular_num[i];
-        lwork = (nei_num+angular_num[i])*(Max_order-Min_order+1); //nei_num*Max_order+Max_order*angular_num[i]+1;
-
-        printf("Solver check n = %d",n);
-
-        /* Allocate the work array */
-
-        work= (double*)malloc(sizeof(double)*lwork);
-        memset(work,0,lwork*sizeof(double));
-
-        ipiv = (int*)malloc(sizeof(int)*n);
-        memset(ipiv,0,n*sizeof(int));
-
-        /* Call LAPACK solver DSYCV */
-
-        F77_NAME(dsysv,DSYSV)("L", &n, &nrhs, &parameter_matrix[i][1], &lda, ipiv, &constant_matrix[i][1], &ldb, work, &lwork, &info); // [i][0] -> [i][1]
-
-        /* Free work array */
-
-        free(ipiv);
-        ipiv = NULL;
-
-        free(work);
-        work = NULL;
-        
-        if (info!=0) {
-          fprintf(fp4,"info=%d for atom %d at MD iter %d\n",i,info,iter);
-        }
-        fprintf(fp2,"atom %d\n",i);
-
-        for (test=1;test<=(nei_num+angular_num[i])*(Max_order-Min_order+1);test++){
-          fprintf(fp2,"%8.8f ",constant_matrix[i][test]);
-        }
-        fprintf(fp2,"\n");
-      }
-
-      fclose(fp4);
-      fclose(fp2);
-
-      printf("Solver Pass\n");
-
-      /* Rebuild the decomposed energy and compute loss */
-
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        species = WhatSpecies[i];
-        r_cut = Spe_Atom_Cut1[species];
-        count_para = 1;
-
-        for (j=1;j<=nei_num;j++){
-          for (p=Min_order;p<=Max_order;p++){
-            energy_test = constant_matrix[i][count_para]*cut_off(dis_nei[i][j],r_cut,0)*pow(dis_nei[i][j],p);
-            model_energy[i][iter] += energy_test;
-            count_para ++;
-          }
-        }
-
-        count_ang = 1;
-        for (j_1=1;j_1<=nei_num-1;j_1++){
-          for (k=j_1+1;k<=nei_num;k++){
-            for (p_1=Min_order;p_1<=Max_order;p_1++){
-              energy_test = constant_matrix[i][count_para]*cut_off(dis_nei[i][j_1],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*pow(ang_nei[i][count_ang],p_1);
-              model_energy[i][iter] += energy_test;
-              count_para ++;
-            }
-            count_ang ++;
-          }
-        }
-      }
-
-      printf("Rebuild Pass\n");
+      ML_modle_energy(iter);
 
     }
 
-    /* Record final model */
+    else if (iter>Train_iter && iter%Correction_iter!=0){
 
-    if (iter==train_iter){
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        for (j=1;j<=(nei_num+angular_num[i])*(Max_order-Min_order+1);j++){
-          final_model[i][j] = constant_matrix[i][j];
-        }
-      }
-    }
-
-    /* Test final model */
-
-    if (iter>train_iter){
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        species = WhatSpecies[i];
-        r_cut = Spe_Atom_Cut1[species];
-        count_para = 1;
-
-        for (j=1;j<=nei_num;j++){
-          for (p=Min_order;p<=Max_order;p++){
-            energy_test = final_model[i][count_para]*cut_off(dis_nei[i][j],r_cut,0)*pow(dis_nei[i][j],p);
-            model_energy[i][iter] += energy_test;
-            count_para ++;
-          }
-        }
-
-        count_ang = 1;
-        for (j_1=1;j_1<=nei_num-1;j_1++){
-          for (k=j_1+1;k<=nei_num;k++){
-            for (p_1=Min_order;p_1<=Max_order;p_1++){
-              energy_test = final_model[i][count_para]*cut_off(dis_nei[i][j_1],r_cut,0)*cut_off(dis_nei[i][k],r_cut,0)*pow(ang_nei[i][count_ang],p_1);
-              model_energy[i][iter] += energy_test;
-              count_para ++;
-            }
-            count_ang ++;
-          }
-        }
-      }
-    }
-
-    /* Output model energy for each iter */
-
-    if (iter==MD_IterNumber){
-      for (i=1;i<=atomnum;i++){
-        fprintf(fp5,"Atom %d ",i);
-        for (j=1;j<=MD_IterNumber;j++){
-          fprintf(fp5,"%8.6f ",model_energy[i][j]);
-        }
-        fprintf(fp5,"\n");
-      }
-
-      fclose(fp5);      
-    }
-
-    printf("Sub test 1\n");
-
-  /* Compute loss and output */
-
-    for (i=1;i<=atomnum;i++){
-      loss[i][iter] = model_energy[i][iter]-Dec_tot[i];
-    }
-
-    if (iter==MD_IterNumber){
-      for (i=1;i<=atomnum;i++){
-        fprintf(fp3,"Atom %d ",i);
-        for (j=1;j<=MD_IterNumber;j++){
-          fprintf(fp3,"%8.6f ",loss[i][j]);
-        }
-        fprintf(fp3,"\n");
-      }
-      fclose(fp3);
-    }
-
-    printf("Sub test 2\n");
-
-    /* Free Matrix A B C A' B' C' Para Constant after last training iter */
-
-    if (iter==train_iter){
-
-      /* Free Matrix A */
-
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        for (j=1;j<=(Max_order-Min_order+1)*nei_num;j++){
-          free(matrix_a[i][j]);
-        }
-      }
-
-      for (i=1;i<=atomnum;i++){
-        free(matrix_a[i]);
-      }
-
-      free(matrix_a);
-      matrix_a = NULL;
-
-      /* Free Matrix B */
-      
-      for (i=1;i<=atomnum;i++){
-        nei_num = FNAN[i];
-        for (j=1;j<=(Max_order-Min_order+1)*nei_num;j++){
-          free(matrix_b[i][j]);
-        }
-        free(matrix_b[i]);
-      }
-      free(matrix_b);
-
-      matrix_b = NULL;
-
-      /* Free Matrix C */
-      
-      for (i=1;i<=atomnum;i++){
-        free(matrix_c[i]);
-      }
-      free(matrix_c);
-
-      matrix_c = NULL;
-
-      /* Free Matrix A' */
-      
-      for (i=1;i<=atomnum;i++){
-        for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
-          free(matrix_a_[i][j]);
-        }
-        free(matrix_a_[i]);
-      }
-      free(matrix_a_);
-
-      matrix_a_ = NULL;
-
-      /* Free Matrix B' */
-      
-      for (i=1;i<=atomnum;i++){
-        for (j=1;j<=(Max_order-Min_order+1)*angular_num[i];j++){
-          free(matrix_b_[i][j]);
-        }
-        free(matrix_b_[i]);
-      }
-      free(matrix_b_);
-
-      matrix_b_ = NULL;
-
-      /* Free Matrix C' */
-      
-      for (i=1;i<=atomnum;i++){
-        free(matrix_c_[i]);
-      }
-      free(matrix_c_);
-
-      matrix_c_ = NULL;
-
-      printf("Free matrix pass\n");
-
-      /* Free Para matrix */
-
-      for (i=1;i<=atomnum;i++){
-        free(parameter_matrix[i]);
-      }
-      free(parameter_matrix);
-
-      parameter_matrix = NULL;
-
-      /* Free Const matrix */
-
-      for (i=1;i<=atomnum;i++){
-        free(constant_matrix[i]);
-      }
-      free(constant_matrix);
-
-      constant_matrix = NULL;
-
-      printf("Free para & const pass\n");
+      ML_modle_energy(iter);
 
     }
 
-    for (i=1;i<=atomnum;i++){
-      free(dis_nei[i]);
-    }
-    free(dis_nei);
-
-    dis_nei = NULL;
-
-    for (i=1;i<=atomnum;i++){
-      free(ang_nei[i]);
-    }
-    free(ang_nei);
-
-    ang_nei = NULL;
-
-    printf("Free dis & ang pass\n");
+    /* Free array */
 
     if (iter==MD_IterNumber){
 
-      free(Dec_tot);
-      Dec_tot = NULL;
+      ML_output(iter,filepath,filename,".fitted_energy");
+      ML_output(iter,filepath,filename,".error");
 
-      for (i=1;i<=atomnum;i++){
-        free(model_energy[i]);
-      }
-      free(model_energy);
+      ML_free_array();
 
-      model_energy = NULL;
-
-      for (i=1;i<=atomnum;i++){
-        free(loss[i]);
-      }
-      free(loss);
-      
-      loss = NULL;
-
-      printf("Free Dec model pass\n");
-
-      free(angular_num);
-      angular_num = NULL;
-
-      printf("free ang\n");
-
-      for (i=1;i<=atomnum;i++){
-        free(final_model[i]);
-      }
-      free(final_model);
-
-      final_model = NULL;
-
-      printf("Free final model pass\n");
     }
+
   }
 }
