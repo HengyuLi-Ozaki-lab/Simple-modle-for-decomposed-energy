@@ -37,7 +37,7 @@ The `ML.Lammda_1` and `ML.Lammda_2` are hyperparameter of the loss function.
 
 Plot.py is a python script for ploting the error respect to each MD iteration, following is an example of Methane.dat:
 ![H](https://user-images.githubusercontent.com/66453357/155910297-5621015a-f73b-4837-8331-360e44703ddb.jpg)
-The x,y axis are respect to error and MD iteration. The black dash line is for indicating the end of training.The color curve is to show the error tendency.
+The x,y axis are respect to error and MD iteration. The black dash line is for indicating the end of training. The color curve is to show the error tendency.
 
 To use Plot.py first copy the Plot.py to work folder and then execute:
 ```
