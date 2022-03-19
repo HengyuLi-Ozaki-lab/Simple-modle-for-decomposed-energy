@@ -43,6 +43,10 @@ To use Plot.py first copy the Plot.py to work folder and then execute:
 ```
 python3 Plot.py
 ```
+Then you can select the plot for energy error or force error by entering:
+```
+force/energy
+```
 Following figures should be generated:
 ```
 C.jpg
