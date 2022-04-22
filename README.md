@@ -53,21 +53,15 @@ error fig
 following is an example of Methane.dat:
 
 1. Energy visualization 
-
 ![H1_energy](https://user-images.githubusercontent.com/66453357/164589202-6d1ff07f-c4e2-4f69-b362-433b40c8cb66.jpg)
-
 The figure shows the comparison of the model energy (2-body, 3-body, total) and DFT energy with the MD iteration (x axis).
 
 2. Force visualization
-
 ![H1_force_x](https://user-images.githubusercontent.com/66453357/164589221-498ca81d-0e5c-4ce9-bf66-23511f2d27fb.jpg)
-
 The figure shows the comparison of the model force (C in x direction) and DFT force with the MD iteration (x axis). Atomic force in x, y, z direction are all plotted.
 
 3. Error visualization
-
 ![H_energy_error](https://user-images.githubusercontent.com/66453357/164589235-0417c632-8096-4143-945f-aacf6bd2ff00.jpg)
 
 ![H_force_error](https://user-images.githubusercontent.com/66453357/164589244-9b706e45-d4e2-4645-a461-980f85025f77.jpg)
-
 The x,y axis are respect to error and MD iteration. The black dash line is for indicating the end of training. The color curve is to show the error tendency. The error figures are organized by element type.
