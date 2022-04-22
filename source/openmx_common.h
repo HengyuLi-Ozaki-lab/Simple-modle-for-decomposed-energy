@@ -2587,6 +2587,7 @@ double FricFac,RandomF;
 
 /* for ML.c input (added by Hengyu Li 2022.02.22) */
 int ML_status;
+int ML_force_status;
 int Max_order;
 int Min_order;
 int Train_iter;

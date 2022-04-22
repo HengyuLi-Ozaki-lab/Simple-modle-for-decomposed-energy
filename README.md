@@ -16,6 +16,7 @@ The example input file is given in Methane.dat, the parameter for ML need to be 
 #
 
 ML.status           on
+ML.force_status     off
 ML.Max_order        3
 ML.Min_order        -3
 ML.Train_iter       50
@@ -25,27 +26,48 @@ ML.Lammda_2         0.0001
 ```
 The `ML.status` is to control whether start the ML process.
 
+The `ML.force_status` is to control whether replace the atomic force by model force.
+
 The `ML.Max_order` and `ML.Min_order` are max order and min order of fitting polynomial.
 
-The `ML.Train_iter` is the training iteration number of on-the-fly preparetion.
+The `ML.Train_iter` is the training iteration number of on-the-fly preparation.
 
 The `ML.Correction_iter` is the correction iteration number, which means after `ML.Correction_iter` the code will do 1 DFT calculation to retrain the model.
 
 The `ML.Lammda_1` and `ML.Lammda_2` are hyperparameter of the loss function.
 
-## Plot.py
+## Visualization.py
 
-Plot.py is a python script for ploting the error respect to each MD iteration, following is an example of Methane.dat:
-![H](https://user-images.githubusercontent.com/66453357/155910297-5621015a-f73b-4837-8331-360e44703ddb.jpg)
-The x,y axis are respect to error and MD iteration. The black dash line is for indicating the end of training. The color curve is to show the error tendency.
+Visualization.py is a python script for plotting the visualization of model energy, model force and error respect to the MD iteration. 
 
 To use Plot.py first copy the Plot.py to work folder and then execute:
 ```
-python3 Plot.py
+python3 Visualization.py
 ```
-Following figures should be generated:
+Following folders should be generated:
 ```
-C.jpg
-H.jpg
+energy fig
+force fig
+error fig
 ```
-The error figures are organized by element type.
+following is an example of Methane.dat:
+
+1. Energy visualization 
+
+![H1_energy](\\wsl.localhost\Ubuntu-18.04\home\hengyu\openmx3.9\Methane\energy fig\H1_energy.jpg)
+
+The figure shows the comparison of the model energy (2-body, 3-body, total) and DFT energy with the MD iteration (x axis).
+
+2. Force visualization
+
+![H1_force_x](\\wsl.localhost\Ubuntu-18.04\home\hengyu\openmx3.9\Methane\force fig\H1_force_x.jpg)
+
+The figure shows the comparison of the model force (C in x direction) and DFT force with the MD iteration (x axis). Atomic force in x, y, z direction are all plotted.
+
+3. Error visualization
+
+![H_energy](\\wsl.localhost\Ubuntu-18.04\home\hengyu\openmx3.9\Methane\error fig\H_energy.jpg)
+
+![H_force](\\wsl.localhost\Ubuntu-18.04\home\hengyu\openmx3.9\Methane\error fig\H_force.jpg)
+
+The x,y axis are respect to error and MD iteration. The black dash line is for indicating the end of training. The color curve is to show the error tendency. The error figures are organized by element type.

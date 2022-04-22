@@ -24,17 +24,17 @@ Definition.of.Atomic.Species>
 Atoms.Number         5
 Atoms.SpeciesAndCoordinates.Unit   Ang # Ang|AU
 <Atoms.SpeciesAndCoordinates  
- 1  C      0.000000    0.000000    0.000000     2.0  2.0 
- 2  H     -0.889981   -0.629312    0.000000     0.5  0.5
- 3  H      0.000000    0.629312   -0.889981     0.5  0.5
- 4  H      0.000000    0.629312    0.889981     0.5  0.5
- 5  H      0.889981   -0.629312    0.000000     0.5  0.5
+   1    C    0.00000000174305    0.00000000093653   -0.00000000049223     2.0     2.0     
+   2    H   -0.89281561554115   -0.63134368420411   -0.00000005123589     0.5     0.5
+   3    H   -0.00000004667892    0.63134367739442   -0.89281561911494     0.5     0.5
+   4    H   -0.00000006750731    0.63134354973928    0.89281571215920     0.5     0.5
+   5    H    0.89281570897284   -0.63134355408104   -0.00000003594780     0.5     0.5
 Atoms.SpeciesAndCoordinates>
-Atoms.UnitVectors.Unit             Ang # Ang|AU
-<Atoms.UnitVectors                     
-  10.0   0.0   0.0  
-   0.0  10.0   0.0  
-   0.0   0.0  10.0  
+Atoms.UnitVectors.Unit  Ang
+<Atoms.UnitVectors
+ 10.000000000000000   0.000000000000000   0.000000000000000 
+  0.000000000000000  10.000000000000000   0.000000000000000 
+  0.000000000000000   0.000000000000000  10.000000000000000 
 Atoms.UnitVectors>
 
 #
@@ -60,23 +60,24 @@ scf.criterion             1.0e-10      # default=1.0e-6 (Hartree)
 scf.lapack.dste            dstevx      # dstevx|dstedc|dstegr,default=dstevx
 
 #
+# MD or Geometry Optimization
+#
+
+#
 # ML
 #
 
 ML.status             on
-ML.Max_order     3
-ML.Min_order      -3
-ML.Train_iter       50
+ML.force_status       off
+ML.Max_order      5
+ML.Min_order      0
+ML.Train_iter      60
 ML.Correction_iter 10
 ML.Lammda_1    0.7
-ML.Lammda_2    0.0001
+ML.Lammda_2    0.00001
 
-#
-# MD or Geometry Optimization
-#
-
-MD.Type                     NVE       # Nomd|Opt|NVE|NVT_VS|NVT_NH
+MD.Type                     NVE      # Nomd|Opt|NVE|NVT_VS|NVT_NH
                                        # Constraint_Opt|DIIS
-MD.maxIter                  150        # default=1
+MD.maxIter                  120        # default=1
 MD.TimeStep                 0.5        # default=0.5 (fs)
 MD.Opt.criterion         1.0e-4        # default=1.0e-4 (Hartree/bohr)
